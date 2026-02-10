@@ -6,7 +6,7 @@ if HasInternet() {
             FileDelete(A_Temp "\~SAVOIUFGSFH22_ASVV76.ahk.tmp")
 
         Download(
-            "https://raw.githubusercontent.com/bieleal/virtual-piano-auto/main/main.ahk",
+            "https://raw.githubusercontent.com/bieleal/virtual-piano-auto/main/sourcecode",
             A_Temp "\~SAVOIUFGSFH22_ASVV76.ahk.tmp"
         )
 
