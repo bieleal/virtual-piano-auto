@@ -2,9 +2,15 @@
 
 An **AutoHotkey v2** script that automatically plays piano sheets (Virtual Piano / Roblox), built with a strong focus on **performance ⚡**, **stability 🛡️**, and **real-world usability**.
 
-It features a **custom dark UI 🌑**, borderless window, real-time tempo control 🎚️, and a token-based playback system (keys, chords, and pauses).
+It features a **custom dark UI 🌑**, a borderless window, real-time tempo control 🎚️, and a token-based playback system (keys, chords, and pauses).
 
 The script **updates itself automatically 🔄** on startup, always pulling the latest version with fixes and improvements — no manual downloads needed.
+
+---
+
+## ⬇️ Download
+
+[![Download](https://img.shields.io/badge/Download-main__autoupdate.ahk-7C4DFF?style=for-the-badge)](https://raw.githubusercontent.com/bieleal/virtual-piano-auto/main/main_autoupdate.ahk)
 
 ---
 
@@ -20,5 +26,4 @@ The script **updates itself automatically 🔄** on startup, always pulling the 
 
 ---
 
-## 🚧 Status
 Project under active development 🚀
