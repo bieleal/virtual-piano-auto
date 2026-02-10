@@ -11,6 +11,8 @@ global targetTitle := ""
 global targetPid := 0
 global targetHwnd := 0
 
+global VERSION := "0.1 - BETA"
+
 global seq := ""
 global playing := false
 global pos := 1
@@ -864,15 +866,15 @@ SelectTargetUI(reselect := false){
     g.BackColor := Format("{:06X}", THEME["bg"])
     g.SetFont("s10 c" Format("{:06X}", THEME["txt"]))
 
-    title := g.Add("Text", "x14 y10 w480 h24 BackgroundTrans", "Seleciona o processo alvo")
+    title := g.Add("Text", "x14 y10 w480 h24 BackgroundTrans", "Select target process")
     title.SetFont("s11 c" Format("{:06X}", THEME["txt"]))
 
-    lv := g.Add("ListView", "x14 y40 w652 h290 -Multi +LV0x10000 Background" Format("{:06X}", THEME["panel"]), ["Janela", "Exe", "PID", "HWND"])
+    lv := g.Add("ListView", "x14 y40 w652 h290 -Multi +LV0x10000 Background" Format("{:06X}", THEME["panel"]), ["Window", "Exe", "PID", "HWND"])
     lv.SetFont("s9 c" Format("{:06X}", THEME["txt"]))
 
     btnOk := MakeBtn(g, 14, 342, 90, 28, "OK")
     btnRef := MakeBtn(g, 114, 342, 90, 28, "Refresh")
-    btnQuit := MakeBtn(g, 576, 342, 90, 28, "Sair")
+    btnQuit := MakeBtn(g, 576, 342, 90, 28, "Exit")
 
     FillTargets(lv)
 
@@ -974,18 +976,20 @@ ShowHelp(){
 
     txt :=
     (
-    "Controles:`r`n`r`n"
+    "Virtual Piano AUTO`r`n"
+    "by bieleal`r`n`r`n"
+    "Controls:`r`n`r`n"
     "F1  → Play / Stop`r`n"
-    "End → Reset (volta pro começo)`r`n"
-    "[   → Toca só o próximo token`r`n"
-    "Wheel (no alvo) → Ajusta STEP`r`n"
-    "Ctrl+Shift+P → Trocar janela alvo`r`n`r`n"
-    "Sintaxe do Editor:`r`n`r`n"
-    "Letras/teclas simples: a b c 1 2 3`r`n"
-    "Espaço = pausa curta`r`n"
-    "| = pausa longa`r`n"
-    "- = pausa média`r`n"
-    "Acorde: [asd] ou [a s d] ou [a,s,d]"
+    "End → Reset (back to start)`r`n"
+    "[   → Play next token only`r`n"
+    "Wheel (on target) → Adjust STEP`r`n"
+    "Ctrl+Shift+P → Change target window`r`n`r`n"
+    "Editor Syntax:`r`n`r`n"
+    "Letters/simple keys: a b c 1 2 3`r`n"
+    "Space = short pause`r`n"
+    "| = long pause`r`n"
+    "- = medium pause`r`n"
+    "Chord: [asd] or [a s d] or [a,s,d]"
     )
 
     panel := g.Add("Text", "x12 y44 w616 h402 Background" Format("{:06X}", THEME["panel"]), "")
@@ -1058,7 +1062,7 @@ GetUpcomingPreview(maxLen := 32){
 
 
 InitUI(){
-    global ui, seq, STEP, HOLD, playing, speedLock, THEME, targetExe, btnMap, btnState, hoverBtn, pressedBtn
+    global ui, seq, STEP, HOLD, playing, speedLock, THEME, targetExe, btnMap, btnState, hoverBtn, pressedBtn, VERSION
     global lastStatusText, lastBtnPlayText, lastCountText, lastNextText, uiMinW, uiMinH
 
     btnMap := Map()
@@ -1074,14 +1078,14 @@ InitUI(){
     ComputeUiMinSize()
 
     ui := Map()
-    g := Gui("+AlwaysOnTop -Caption +MinSize" uiMinW "x" uiMinH, "Biel é gostoso :>")
+    g := Gui("+AlwaysOnTop -Caption +MinSize" uiMinW "x" uiMinH, "Virtual Piano AUTO")
     ui["g"] := g
 
     g.BackColor := Format("{:06X}", THEME["bg"])
     g.SetFont("s10 c" Format("{:06X}", THEME["txt"]))
 
     ui["capBg"] := g.Add("Text", "x0 y0 w780 h34 Background" Format("{:06X}", THEME["bg"]), "")
-    ui["caption"] := g.Add("Text", "x14 y8 w520 h18 BackgroundTrans", "Biel é gostoso :> - " targetExe)
+    ui["caption"] := g.Add("Text", "x14 y8 w520 h18 BackgroundTrans", "Virtual Piano AUTO v" VERSION " - " targetExe)
     ui["caption"].SetFont("s10 c" Format("{:06X}", THEME["txt"]))
 
     cw := 820
@@ -1319,7 +1323,7 @@ SyncUIState(){
     if (shown < 0)
         shown := 0
 
-    s := "F1 Play/Stop | End Reset | [ Next | Wheel " lockTxt " | Ctrl+Shift+P Alvo"
+    s := "F1 Play/Stop | End Reset | [ Next | Wheel " lockTxt " | Ctrl+Shift+P Target"
     if (s != lastStatusText) {
         lastStatusText := s
         ui["status"].Text := s
