@@ -1,0 +1,1339 @@
+#Requires AutoHotkey v2.0
+#SingleInstance Force
+
+DllCall("user32\SetProcessDpiAwarenessContext", "ptr", -4)
+
+A_MaxHotkeysPerInterval := 500
+A_HotkeyInterval := 2000
+
+global targetExe := ""
+global targetTitle := ""
+global targetPid := 0
+global targetHwnd := 0
+
+global seq := ""
+global playing := false
+global pos := 1
+
+global tokens := []
+global tcount := 0
+
+global STEP := 200
+global HOLD := 45
+global SPACEGAP := 45
+global BARGAP := 260
+global DASHGAP := 90
+
+global pendingRelease := 0
+global TickFn := Tick.Bind()
+global WatchFn := WatchTarget.Bind()
+global RebuildFn := RebuildIfDue.Bind()
+global HoverFn := PollHover.Bind()
+global ui := 0
+global buildLock := false
+global speedLock := false
+
+global downKeys := Map()
+
+global nextDue := 0
+global rebuildDue := 0
+global rebuildPending := false
+
+global THEME := Map(
+    "bg", 0x121212,
+    "panel", 0x1A1A1A,
+    "btn", 0x242424,
+    "btnHot", 0x353535,
+    "btnDown", 0x141414,
+    "btnText", 0xEAEAEA,
+    "txt", 0xEAEAEA,
+    "muted", 0xB8B8B8,
+    "accent", 0x7C4DFF
+)
+
+global gBrushBg := 0
+global gBrushPanel := 0
+global gBrushBtn := 0
+global gBrushBtnHot := 0
+global gBrushBtnDown := 0
+
+global hoverBtn := 0
+global pressedBtn := 0
+global btnMap := Map()
+global btnState := Map()
+global msgHooks := false
+global helpGui := 0
+
+global lastStatusText := ""
+global lastBtnPlayText := ""
+global lastCountText := ""
+global lastNextText := ""
+
+global uiMinW := 560
+global uiMinH := 420
+
+OnExit((*) => (StopAndReset(), CleanupThemeGdi()))
+
+ApplyTempo()
+BuildTokens()
+SelectTargetUI()
+
+IsTargetActive(){
+    global targetHwnd, targetPid, targetExe, targetTitle
+    if (!targetPid)
+        return false
+    if (targetHwnd && WinActive("ahk_id " targetHwnd))
+        return true
+    if WinActive("ahk_pid " targetPid)
+        return true
+    if (targetExe != "" && WinActive("ahk_exe " targetExe))
+        return true
+    if (targetTitle != "" && WinActive(targetTitle))
+        return true
+    return false
+}
+
+^+p::{
+    SelectTargetUI(true)
+}
+
+#HotIf IsTargetActive()
+
+F1::{
+    global playing
+    playing := !playing
+    if (playing)
+        StartPlayback()
+    else
+        StopPlayback()
+    SyncUIState()
+}
+
+End::{
+    StopAndReset()
+}
+
+[::
+{
+    PlayOne()
+}
+
+#HotIf
+
+#HotIf IsTargetActive() && !speedLock
+~WheelUp::{
+    global STEP
+    STEP -= 10
+    ApplyTempo()
+    QueueRebuild(false)
+    SyncUIValues()
+}
+
+~WheelDown::{
+    global STEP
+    STEP += 10
+    ApplyTempo()
+    QueueRebuild(false)
+    SyncUIValues()
+}
+#HotIf
+
+GetWorkAreaForPoint(x, y, &l, &t, &r, &b){
+    c := MonitorGetCount()
+    Loop c {
+        MonitorGetWorkArea(A_Index, &ml, &mt, &mr, &mb)
+        if (x >= ml && x <= mr && y >= mt && y <= mb) {
+            l := ml, t := mt, r := mr, b := mb
+            return
+        }
+    }
+    MonitorGetWorkArea(1, &l, &t, &r, &b)
+}
+
+ClampWindowToWorkArea(hwnd, pad := 8){
+    try {
+        if (!WinExist("ahk_id " hwnd))
+            return
+        WinGetPos(&x, &y, &w, &h, "ahk_id " hwnd)
+        cx := x + (w // 2)
+        cy := y + (h // 2)
+        GetWorkAreaForPoint(cx, cy, &l, &t, &r, &b)
+        wx := x, wy := y
+        maxW := (r - l - pad*2)
+        maxH := (b - t - pad*2)
+        if (w > maxW)
+            w := maxW
+        if (h > maxH)
+            h := maxH
+        if (wx < l + pad)
+            wx := l + pad
+        if (wy < t + pad)
+            wy := t + pad
+        if (wx + w > r - pad)
+            wx := r - pad - w
+        if (wy + h > b - pad)
+            wy := b - pad - h
+        WinMove(wx, wy, w, h, "ahk_id " hwnd)
+    } catch {
+        return
+    }
+}
+
+ComputeUiMinSize(){
+    global uiMinW, uiMinH
+    capH := 34
+    pad := 12
+    gap := 10
+    btnH := 28
+    slidersH := 28
+    statusH := 22
+    minEditH := 140
+    uiMinW := 520
+    uiMinH := capH + pad + minEditH + gap + btnH + gap + slidersH + gap + statusH + pad
+}
+
+StartPlayback(){
+    global nextDue
+    nextDue := A_TickCount
+    SetTimer(TickFn, 10)
+    UpdateCaretForToken(pos)
+}
+
+StopPlayback(){
+    SetTimer(TickFn, 0)
+}
+
+QueueRebuild(resetToStart){
+    global rebuildPending, rebuildDue
+    rebuildPending := resetToStart ? 2 : 1
+    rebuildDue := A_TickCount + 80
+    SetTimer(RebuildFn, 20)
+}
+
+RebuildIfDue(){
+    global rebuildPending, rebuildDue
+    if (!rebuildPending) {
+        SetTimer(RebuildFn, 0)
+        return
+    }
+    if (A_TickCount < rebuildDue)
+        return
+    resetToStart := (rebuildPending = 2)
+    rebuildPending := false
+    SetTimer(RebuildFn, 0)
+    SafeRebuild(resetToStart)
+}
+
+ReleaseAllDown(){
+    global downKeys
+    if (!downKeys.Count)
+        return
+    s := "{Blind}"
+    for k, _ in downKeys
+        s .= "{" k " up}"
+    SendInput(s)
+    downKeys.Clear()
+}
+
+StopAndReset(){
+    global playing, pos, pendingRelease, nextDue
+    if (pendingRelease) {
+        SendChordUp(pendingRelease)
+        pendingRelease := 0
+    }
+    ReleaseAllDown()
+    pos := 1
+    playing := false
+    nextDue := 0
+    StopPlayback()
+    UpdateCaretForToken(pos)
+    SyncUIState()
+}
+
+SafeRebuild(resetToStart){
+    global buildLock, playing, pendingRelease, pos, tcount
+
+    wasPlaying := playing
+    buildLock := true
+    playing := false
+    StopPlayback()
+
+    if (pendingRelease) {
+        SendChordUp(pendingRelease)
+        pendingRelease := 0
+    }
+    ReleaseAllDown()
+
+    BuildTokens()
+
+    if (resetToStart)
+        pos := 1
+    else {
+        if (pos < 1)
+            pos := 1
+        if (pos > tcount + 1)
+            pos := 1
+    }
+
+    buildLock := false
+    UpdateCaretForToken(pos)
+    SyncUIState()
+
+    if (wasPlaying) {
+        playing := true
+        StartPlayback()
+    }
+}
+
+ApplyTempo(){
+    global STEP, HOLD, SPACEGAP, BARGAP, DASHGAP
+    if (STEP < 15)
+        STEP := 15
+    SPACEGAP := Round(STEP * 0.30)
+    DASHGAP := Round(STEP * 0.45)
+    BARGAP := Round(STEP * 1.30)
+    if (HOLD > STEP - 5)
+        HOLD := STEP - 5
+    if (HOLD < 10)
+        HOLD := 10
+}
+
+ParseChord(keys){
+    keys := Trim(keys)
+    if (keys = "")
+        return []
+
+    if InStr(keys, " ") || InStr(keys, ",") {
+        keys := RegExReplace(keys, "\s+", " ")
+        parts := StrSplit(keys, [A_Space, ","])
+        out := []
+        seen := Map()
+        for k in parts {
+            k := Trim(k)
+            if (k = "")
+                continue
+            if !seen.Has(k) {
+                seen[k] := 1
+                out.Push(k)
+            }
+        }
+        return out
+    }
+
+    out := []
+    seen := Map()
+    Loop Parse keys {
+        k := A_LoopField
+        if !seen.Has(k) {
+            seen[k] := 1
+            out.Push(k)
+        }
+    }
+    return out
+}
+
+PushWait(ms, s, e){
+    global tokens
+    n := tokens.Length
+    if (n && tokens[n][1] = 1) {
+        tokens[n][2] += ms
+        tokens[n][4] := e
+    } else
+        tokens.Push([1, ms, s, e])
+}
+
+BuildTokens(){
+    global seq, tokens, tcount, SPACEGAP, BARGAP, DASHGAP, pos
+
+    tokens := []
+    s := seq
+    len := StrLen(s)
+    i := 1
+
+    while (i <= len) {
+        c := SubStr(s, i, 1)
+
+        if (c = "`r" || c = "`n" || c = "`t") {
+            i += 1
+            continue
+        }
+
+        if (c = "[") {
+            j := i + 1
+            while (j <= len) {
+                if (SubStr(s, j, 1) = "]")
+                    break
+                j += 1
+            }
+            if (j > len) {
+                tokens.Push([2, "[", i, i])
+                i += 1
+                continue
+            }
+            keys := SubStr(s, i + 1, j - i - 1)
+            chord := ParseChord(keys)
+            if (chord.Length)
+                tokens.Push([3, chord, i, j])
+            else
+                tokens.Push([2, "[]", i, j])
+            i := j + 1
+            continue
+        }
+
+        if (c = " ") {
+            PushWait(SPACEGAP, i, i)
+            i += 1
+            continue
+        }
+
+        if (c = "|") {
+            PushWait(BARGAP, i, i)
+            i += 1
+            continue
+        }
+
+        if (c = "-" || c = "–" || c = "—") {
+            PushWait(DASHGAP, i, i)
+            i += 1
+            continue
+        }
+
+        tokens.Push([2, c, i, i])
+        i += 1
+    }
+
+    tcount := tokens.Length
+    if (pos < 1)
+        pos := 1
+    if (pos > tcount + 1)
+        pos := 1
+}
+
+UpdateCaretForToken(idx){
+    return
+}
+
+ExpandKeyChar(ch, &needShift){
+    static sm := 0
+    if (!sm) {
+        sm := Map()
+        sm["!"] := "1", sm["@"] := "2", sm["#"] := "3", sm["$"] := "4", sm["%"] := "5"
+        sm["^"] := "6", sm["&"] := "7", sm["*"] := "8", sm["("] := "9", sm[")"] := "0"
+        sm["_"] := "-", sm["+"] := "=", sm["{"] := "[", sm["}"] := "]", sm[":"] := ";"
+        sm["<"] := ",", sm[">"] := ".", sm["?"] := "/", sm["|"] := Chr(92)
+    }
+
+    o := Ord(ch)
+    if (o >= 65 && o <= 90) {
+        needShift := true
+        return Chr(o + 32)
+    }
+    if (sm.Has(ch)) {
+        needShift := true
+        return sm[ch]
+    }
+    needShift := false
+    return ch
+}
+
+ExpandChord(arr){
+    u := []
+    s := []
+    seenU := Map()
+    seenS := Map()
+
+    for ch in arr {
+        base := ExpandKeyChar(ch, &needShift)
+        if (needShift) {
+            if !seenS.Has(base) {
+                seenS[base] := 1
+                s.Push(base)
+            }
+        } else {
+            if !seenU.Has(base) {
+                seenU[base] := 1
+                u.Push(base)
+            }
+        }
+    }
+
+    both := []
+    seenB := Map()
+    for k, _ in seenU {
+        if (seenS.Has(k) && !seenB.Has(k)) {
+            seenB[k] := 1
+            both.Push(k)
+        }
+    }
+
+    if (both.Length) {
+        u2 := []
+        s2 := []
+        for k in u
+            if !seenB.Has(k)
+                u2.Push(k)
+        for k in s
+            if !seenB.Has(k)
+                s2.Push(k)
+        u := u2
+        s := s2
+    }
+
+    return Map("u", u, "s", s, "b", both, "h", (s.Length > 0 || both.Length > 0))
+}
+
+SendKeyTap(k){
+    global downKeys
+    if (downKeys.Count)
+        ReleaseAllDown()
+
+    base := ExpandKeyChar(k, &needShift)
+    if (needShift) {
+        SendInput("{Blind}{Shift down}{" base "}{Shift up}")
+        return
+    }
+
+    o := Ord(base)
+    if ((o >= 48 && o <= 57) || (o >= 65 && o <= 90) || (o >= 97 && o <= 122))
+        SendInput("{Blind}{" base "}")
+    else
+        SendInput("{Blind}" base)
+}
+
+SendChordDown(arr){
+    global downKeys
+    pack := ExpandChord(arr)
+    u := pack["u"]
+    s := pack["s"]
+    b := pack["b"]
+    hasShift := pack["h"]
+
+    out := "{Blind}"
+
+    for k in b
+        out .= "{" k "}"
+
+    for k in u {
+        downKeys[k] := 1
+        out .= "{" k " down}"
+    }
+
+    if (hasShift) {
+        downKeys["Shift"] := 1
+        out .= "{Shift down}"
+        for k in s {
+            downKeys[k] := 1
+            out .= "{" k " down}"
+        }
+        for k in b
+            out .= "{" k "}"
+    }
+
+    SendInput(out)
+    return pack
+}
+
+SendChordUp(pack){
+    global downKeys
+    u := pack["u"]
+    s := pack["s"]
+    hasShift := pack["h"]
+
+    out := "{Blind}"
+
+    if (hasShift) {
+        for k in s {
+            if downKeys.Has(k)
+                downKeys.Delete(k)
+            out .= "{" k " up}"
+        }
+        if downKeys.Has("Shift")
+            downKeys.Delete("Shift")
+        out .= "{Shift up}"
+    }
+
+    for k in u {
+        if downKeys.Has(k)
+            downKeys.Delete(k)
+        out .= "{" k " up}"
+    }
+
+    SendInput(out)
+}
+
+Tick(){
+    global playing, pos, tcount, tokens, STEP, HOLD, pendingRelease, buildLock, nextDue, targetPid
+
+    if (!playing || buildLock)
+        return
+
+    if (targetPid && !ProcessExist(targetPid)) {
+        StopAndReset()
+        ExitApp()
+    }
+
+    now := A_TickCount
+    if (nextDue && now < nextDue)
+        return
+
+    Critical "Off"
+
+    if (pendingRelease) {
+        pack := pendingRelease
+        pendingRelease := 0
+        SendChordUp(pack)
+        nextDue := now + STEP
+        UpdateCaretForToken(pos)
+        SyncUIState()
+        return
+    }
+
+    if (pos > tcount) {
+        playing := false
+        ReleaseAllDown()
+        nextDue := 0
+        StopPlayback()
+        UpdateCaretForToken(pos)
+        SyncUIState()
+        return
+    }
+
+    if (pos < 1)
+        pos := 1
+
+    UpdateCaretForToken(pos)
+    t := tokens[pos]
+    pos += 1
+
+    kind := t[1]
+    val := t[2]
+
+    if (kind = 1) {
+        nextDue := now + val
+        SyncUIState()
+        return
+    }
+
+    if (kind = 2) {
+        SendKeyTap(val)
+        nextDue := now + STEP
+        SyncUIState()
+        return
+    }
+
+    pendingRelease := SendChordDown(val)
+    nextDue := now + HOLD
+    SyncUIState()
+}
+
+PlayOne(){
+    global pos, tcount, tokens, pendingRelease, buildLock
+    if (buildLock)
+        return
+    if (pendingRelease) {
+        SendChordUp(pendingRelease)
+        pendingRelease := 0
+    }
+    ReleaseAllDown()
+
+    Critical "Off"
+
+    while (pos <= tcount && tokens[pos][1] = 1)
+        pos += 1
+    if (pos > tcount) {
+        UpdateCaretForToken(pos)
+        SyncUIState()
+        return
+    }
+
+    UpdateCaretForToken(pos)
+    t := tokens[pos]
+    pos += 1
+
+    if (t[1] = 2) {
+        SendKeyTap(t[2])
+        UpdateCaretForToken(pos)
+        SyncUIState()
+        return
+    }
+
+    pressed := SendChordDown(t[2])
+    SendChordUp(pressed)
+    UpdateCaretForToken(pos)
+    SyncUIState()
+}
+
+InitThemeGdi(){
+    global THEME, gBrushBg, gBrushPanel, gBrushBtn, gBrushBtnHot, gBrushBtnDown
+    if (!gBrushBg)
+        gBrushBg := DllCall("gdi32\CreateSolidBrush", "UInt", THEME["bg"], "Ptr")
+    if (!gBrushPanel)
+        gBrushPanel := DllCall("gdi32\CreateSolidBrush", "UInt", THEME["panel"], "Ptr")
+    if (!gBrushBtn)
+        gBrushBtn := DllCall("gdi32\CreateSolidBrush", "UInt", THEME["btn"], "Ptr")
+    if (!gBrushBtnHot)
+        gBrushBtnHot := DllCall("gdi32\CreateSolidBrush", "UInt", THEME["btnHot"], "Ptr")
+    if (!gBrushBtnDown)
+        gBrushBtnDown := DllCall("gdi32\CreateSolidBrush", "UInt", THEME["btnDown"], "Ptr")
+}
+
+CleanupThemeGdi(){
+    global gBrushBg, gBrushPanel, gBrushBtn, gBrushBtnHot, gBrushBtnDown
+    for _, h in [gBrushBg, gBrushPanel, gBrushBtn, gBrushBtnHot, gBrushBtnDown]
+        if (h)
+            DllCall("gdi32\DeleteObject", "Ptr", h)
+    gBrushBg := 0, gBrushPanel := 0, gBrushBtn := 0, gBrushBtnHot := 0, gBrushBtnDown := 0
+}
+
+EnableDarkFrame(hwnd){
+    val := 1
+    DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 20, "Int*", val, "Int", 4)
+    DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 19, "Int*", val, "Int", 4)
+    pref := 2
+    DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "Int", 33, "Int*", pref, "Int", 4)
+}
+
+RoundRegion(hwnd, r){
+    try {
+        if (!WinExist("ahk_id " hwnd))
+            return
+        WinGetPos(, , &w, &h, "ahk_id " hwnd)
+        if (w <= 0 || h <= 0)
+            return
+        hrgn := DllCall("gdi32\CreateRoundRectRgn", "Int", 0, "Int", 0, "Int", w+1, "Int", h+1, "Int", r, "Int", r, "Ptr")
+        DllCall("user32\SetWindowRgn", "Ptr", hwnd, "Ptr", hrgn, "Int", 1)
+    } catch {
+        return
+    }
+}
+
+WM_CTLCOLOREDIT(wParam, lParam, msg, hwnd){
+    global THEME, gBrushPanel
+    DllCall("gdi32\SetTextColor", "Ptr", wParam, "UInt", THEME["txt"])
+    DllCall("gdi32\SetBkColor", "Ptr", wParam, "UInt", THEME["panel"])
+    return gBrushPanel
+}
+
+WM_CTLCOLORSTATIC(wParam, lParam, msg, hwnd){
+    global THEME, gBrushBg, gBrushBtn, gBrushBtnHot, gBrushBtnDown, btnState
+    if (btnState.Has(lParam)) {
+        st := btnState[lParam]
+        if (st = 2) {
+            DllCall("gdi32\SetTextColor", "Ptr", wParam, "UInt", THEME["btnText"])
+            DllCall("gdi32\SetBkColor", "Ptr", wParam, "UInt", THEME["btnDown"])
+            return gBrushBtnDown
+        }
+        if (st = 1) {
+            DllCall("gdi32\SetTextColor", "Ptr", wParam, "UInt", THEME["btnText"])
+            DllCall("gdi32\SetBkColor", "Ptr", wParam, "UInt", THEME["btnHot"])
+            return gBrushBtnHot
+        }
+        DllCall("gdi32\SetTextColor", "Ptr", wParam, "UInt", THEME["btnText"])
+        DllCall("gdi32\SetBkColor", "Ptr", wParam, "UInt", THEME["btn"])
+        return gBrushBtn
+    }
+    DllCall("gdi32\SetTextColor", "Ptr", wParam, "UInt", THEME["muted"])
+    DllCall("gdi32\SetBkColor", "Ptr", wParam, "UInt", THEME["bg"])
+    return gBrushBg
+}
+
+WM_NCHITTEST(wParam, lParam, msg, hwnd){
+    global ui, btnMap
+    if (!ui)
+        return
+    g := ui["g"]
+    if (hwnd != g.Hwnd)
+        return
+    x := (lParam & 0xFFFF)
+    y := ((lParam >> 16) & 0xFFFF)
+    pt := Buffer(8, 0)
+    NumPut("Int", x, pt, 0)
+    NumPut("Int", y, pt, 4)
+    DllCall("user32\ScreenToClient", "Ptr", hwnd, "Ptr", pt)
+    cx := NumGet(pt, 0, "Int")
+    cy := NumGet(pt, 4, "Int")
+    if (cy > 34)
+        return
+    for h, b in btnMap {
+        bx := b[1], by := b[2], bw := b[3], bh := b[4]
+        if (cx >= bx && cx <= bx+bw && cy >= by && cy <= by+bh)
+            return
+    }
+    return 2
+}
+
+SetBtnState(ctrl, state){
+    global btnState
+    if (!ctrl)
+        return
+    btnState[ctrl.Hwnd] := state
+    DllCall("user32\InvalidateRect", "Ptr", ctrl.Hwnd, "Ptr", 0, "Int", 1)
+}
+
+PollHover(){
+    global ui, btnMap, hoverBtn, pressedBtn
+    if (!ui)
+        return
+    g := ui["g"]
+    CoordMode("Mouse", "Client")
+    MouseGetPos(&mx, &my, &win)
+    if (win != g.Hwnd) {
+        if (pressedBtn) {
+            SetBtnState(pressedBtn, (hoverBtn = pressedBtn) ? 1 : 0)
+            pressedBtn := 0
+        }
+        if (hoverBtn) {
+            SetBtnState(hoverBtn, 0)
+            hoverBtn := 0
+        }
+        return
+    }
+
+    hit := 0
+    for h, b in btnMap {
+        x := b[1], y := b[2], w := b[3], hgt := b[4]
+        if (mx >= x && mx <= x+w && my >= y && my <= y+hgt) {
+            hit := h
+            break
+        }
+    }
+
+    ldown := GetKeyState("LButton", "P")
+
+    if (hit != hoverBtn) {
+        if (hoverBtn && hoverBtn != pressedBtn)
+            SetBtnState(hoverBtn, 0)
+        hoverBtn := hit
+        if (hoverBtn && hoverBtn != pressedBtn)
+            SetBtnState(hoverBtn, 1)
+    }
+
+    if (ldown) {
+        if (hit && pressedBtn != hit) {
+            if (pressedBtn)
+                SetBtnState(pressedBtn, (hoverBtn = pressedBtn) ? 1 : 0)
+            pressedBtn := hit
+            SetBtnState(pressedBtn, 2)
+        }
+    } else {
+        if (pressedBtn) {
+            SetBtnState(pressedBtn, (hoverBtn = pressedBtn) ? 1 : 0)
+            pressedBtn := 0
+        }
+    }
+}
+
+MakeBtn(g, x, y, w, h, text){
+    global THEME, btnMap, btnState
+    c := g.Add("Text", "x" x " y" y " w" w " h" h " Center 0x200", text)
+    c.SetFont("s9 c" Format("{:06X}", THEME["btnText"]))
+    btnMap[c] := [x, y, w, h]
+    btnState[c.Hwnd] := 0
+    return c
+}
+
+EnsureMsgHooks(){
+    global msgHooks
+    if (msgHooks)
+        return
+    msgHooks := true
+    InitThemeGdi()
+    OnMessage(0x0133, WM_CTLCOLOREDIT)
+    OnMessage(0x0138, WM_CTLCOLORSTATIC)
+    OnMessage(0x0084, WM_NCHITTEST)
+}
+
+SelectTargetUI(reselect := false){
+    global ui, targetExe, targetTitle, targetPid, targetHwnd, THEME, btnMap, btnState, hoverBtn, pressedBtn
+    if (ui && !reselect)
+        return
+
+    if (ui) {
+        try ui["g"].Destroy()
+        ui := 0
+    }
+
+    btnMap := Map()
+    btnState := Map()
+    hoverBtn := 0
+    pressedBtn := 0
+
+    EnsureMsgHooks()
+
+    g := Gui("-Caption", "")
+    g.BackColor := Format("{:06X}", THEME["bg"])
+    g.SetFont("s10 c" Format("{:06X}", THEME["txt"]))
+
+    title := g.Add("Text", "x14 y10 w480 h24 BackgroundTrans", "Seleciona o processo alvo")
+    title.SetFont("s11 c" Format("{:06X}", THEME["txt"]))
+
+    lv := g.Add("ListView", "x14 y40 w652 h290 -Multi +LV0x10000 Background" Format("{:06X}", THEME["panel"]), ["Janela", "Exe", "PID", "HWND"])
+    lv.SetFont("s9 c" Format("{:06X}", THEME["txt"]))
+
+    btnOk := MakeBtn(g, 14, 342, 90, 28, "OK")
+    btnRef := MakeBtn(g, 114, 342, 90, 28, "Refresh")
+    btnQuit := MakeBtn(g, 576, 342, 90, 28, "Sair")
+
+    FillTargets(lv)
+
+    btnOk.OnEvent("Click", (*) => SelectRow())
+    btnRef.OnEvent("Click", (*) => (lv.Delete(), FillTargets(lv)))
+    btnQuit.OnEvent("Click", (*) => ExitApp())
+
+    lv.OnEvent("DoubleClick", (*) => SelectRow())
+
+    SelectRow(){
+        global targetExe, targetTitle, targetPid, targetHwnd
+        row := lv.GetNext(0, "F")
+        if (!row)
+            row := lv.GetNext()
+        if (!row)
+            return
+        t := lv.GetText(row, 1)
+        e := lv.GetText(row, 2)
+        p := Integer(lv.GetText(row, 3))
+        h := Integer(lv.GetText(row, 4))
+        targetExe := e
+        targetTitle := t
+        targetPid := p
+        targetHwnd := h
+        g.Destroy()
+        InitUI()
+        SetTimer(WatchFn, 250)
+    }
+
+    g.OnEvent("Size", (*) => RoundRegion(g.Hwnd, 18))
+
+    g.Show("w680 h380")
+    EnableDarkFrame(g.Hwnd)
+    RoundRegion(g.Hwnd, 18)
+    ClampWindowToWorkArea(g.Hwnd)
+    SetTimer(HoverFn, 16)
+}
+
+FillTargets(lv){
+    hwnds := WinGetList()
+    seen := Map()
+    for hwnd in hwnds {
+        try {
+            t := WinGetTitle("ahk_id " hwnd)
+            if (t = "")
+                continue
+            e := WinGetProcessName("ahk_id " hwnd)
+            p := WinGetPID("ahk_id " hwnd)
+            k := e ":" p ":" t
+            if seen.Has(k)
+                continue
+            seen[k] := 1
+            lv.Add("", t, e, p, hwnd)
+        }
+    }
+    lv.ModifyCol(1, 360)
+    lv.ModifyCol(2, 190)
+    lv.ModifyCol(3, 80)
+    lv.ModifyCol(4, 0)
+}
+
+WatchTarget(){
+    global targetPid
+    if (!targetPid)
+        return
+    if (ProcessExist(targetPid))
+        return
+    StopAndReset()
+    ExitApp()
+}
+
+ShowHelp(){
+    global helpGui, THEME, ui
+
+    if (!ui)
+        return
+
+    if (helpGui && WinExist("ahk_id " helpGui.Hwnd)) {
+        helpGui.Show()
+        WinSetAlwaysOnTop(1, "ahk_id " helpGui.Hwnd)
+        WinActivate("ahk_id " helpGui.Hwnd)
+        ClampWindowToWorkArea(helpGui.Hwnd)
+        return
+    }
+
+    g := Gui("-Caption +ToolWindow +AlwaysOnTop +Resize", "")
+    helpGui := g
+    g.Opt("+Owner" ui["g"].Hwnd)
+
+    g.BackColor := Format("{:06X}", THEME["bg"])
+    g.SetFont("s10 c" Format("{:06X}", THEME["txt"]))
+
+    g.Add("Text", "x0 y0 w900 h34 Background" Format("{:06X}", THEME["bg"]), "")
+    g.Add("Text", "x14 y8 w520 h18 BackgroundTrans", "Help").SetFont("s10 c" Format("{:06X}", THEME["txt"]))
+
+    btnClose := g.Add("Text", "x0 y6 w30 h22 Center 0x200 BackgroundTrans", "✕")
+    btnClose.SetFont("s9 c" Format("{:06X}", THEME["btnText"]))
+    btnClose.OnEvent("Click", (*) => g.Hide())
+
+    txt :=
+    (
+    "Controles:`r`n`r`n"
+    "F1  → Play / Stop`r`n"
+    "End → Reset (volta pro começo)`r`n"
+    "[   → Toca só o próximo token`r`n"
+    "Wheel (no alvo) → Ajusta STEP`r`n"
+    "Ctrl+Shift+P → Trocar janela alvo`r`n`r`n"
+    "Sintaxe do Editor:`r`n`r`n"
+    "Letras/teclas simples: a b c 1 2 3`r`n"
+    "Espaço = pausa curta`r`n"
+    "| = pausa longa`r`n"
+    "- = pausa média`r`n"
+    "Acorde: [asd] ou [a s d] ou [a,s,d]"
+    )
+
+    panel := g.Add("Text", "x12 y44 w616 h402 Background" Format("{:06X}", THEME["panel"]), "")
+    body := g.Add("Text", "x26 y58 w588 h374 +Wrap BackgroundTrans", txt)
+    body.SetFont("s10 c" Format("{:06X}", THEME["muted"]))
+
+    g.OnEvent("Size", (*) => (
+        RoundRegion(g.Hwnd, 18),
+        WinGetPos(, , &w, &h, "ahk_id " g.Hwnd),
+        btnClose.Move(w-44, 6),
+        panel.Move(12, 44, w-24, h-56),
+        body.Move(26, 58, w-52, h-82),
+        ClampWindowToWorkArea(g.Hwnd)
+    ))
+    g.OnEvent("Close", (*) => g.Hide())
+
+    g.Show("w640 h460")
+    EnableDarkFrame(g.Hwnd)
+    RoundRegion(g.Hwnd, 18)
+    ClampWindowToWorkArea(g.Hwnd)
+    WinSetAlwaysOnTop(1, "ahk_id " g.Hwnd)
+    WinActivate("ahk_id " g.Hwnd)
+}
+
+GetUpcomingPreview(maxLen := 32){
+    global seq, pos, tcount, tokens
+    len := StrLen(seq)
+
+    if (pos > tcount)
+        return "end"
+
+    j := tokens[pos][3]
+    if (!j || j < 1)
+        j := 1
+    if (j > len)
+        return "end"
+
+    out := ""
+    while (j <= len && StrLen(out) < maxLen) {
+        c := SubStr(seq, j, 1)
+
+        if (c = "`r" || c = "`n" || c = "`t" || c = " ") {
+            j += 1
+            continue
+        }
+
+        if (c = "[") {
+            k := j + 1
+            while (k <= len && SubStr(seq, k, 1) != "]")
+                k += 1
+            if (k <= len) {
+                chunk := SubStr(seq, j, k - j + 1)
+                if (StrLen(out) + StrLen(chunk) > maxLen)
+                    break
+                out .= (out = "" ? "" : " ") chunk
+                j := k + 1
+                continue
+            }
+        }
+
+        if (c = "–" || c = "—")
+            c := "-"
+
+        out .= (out = "" ? "" : " ") c
+        j += 1
+    }
+
+    return out = "" ? "end" : out
+}
+
+
+InitUI(){
+    global ui, seq, STEP, HOLD, playing, speedLock, THEME, targetExe, btnMap, btnState, hoverBtn, pressedBtn
+    global lastStatusText, lastBtnPlayText, lastCountText, lastNextText, uiMinW, uiMinH
+
+    btnMap := Map()
+    btnState := Map()
+    hoverBtn := 0
+    pressedBtn := 0
+    lastStatusText := ""
+    lastBtnPlayText := ""
+    lastCountText := ""
+    lastNextText := ""
+
+    EnsureMsgHooks()
+    ComputeUiMinSize()
+
+    ui := Map()
+    g := Gui("+AlwaysOnTop -Caption +MinSize" uiMinW "x" uiMinH, "Biel é gostoso :>")
+    ui["g"] := g
+
+    g.BackColor := Format("{:06X}", THEME["bg"])
+    g.SetFont("s10 c" Format("{:06X}", THEME["txt"]))
+
+    ui["capBg"] := g.Add("Text", "x0 y0 w780 h34 Background" Format("{:06X}", THEME["bg"]), "")
+    ui["caption"] := g.Add("Text", "x14 y8 w520 h18 BackgroundTrans", "Biel é gostoso :> - " targetExe)
+    ui["caption"].SetFont("s10 c" Format("{:06X}", THEME["txt"]))
+
+    cw := 820
+    side := 12
+    closeX := cw - side - 36
+    minX := cw - side - 72
+    helpX := cw - side - 108
+
+    ui["btnClose"] := MakeBtn(g, closeX, 6, 30, 22, "✕")
+    ui["btnMin"] := MakeBtn(g, minX, 6, 30, 22, "—")
+    ui["btnHelp"] := MakeBtn(g, helpX, 6, 30, 22, "?")
+
+    ui["btnMin"].OnEvent("Click", (*) => WinMinimize("ahk_id " g.Hwnd))
+    ui["btnClose"].OnEvent("Click", (*) => ExitApp())
+    ui["btnHelp"].OnEvent("Click", (*) => (ShowHelp(), ui["g"].Opt("+AlwaysOnTop")))
+
+    ui["edit"] := g.Add("Edit", "x12 y44 w756 h214 +WantTab -E0x200 Background" Format("{:06X}", THEME["panel"]), seq)
+
+    ui["btnApply"] := MakeBtn(g, 12, 268, 90, 28, "Apply")
+    ui["btnPlay"] := MakeBtn(g, 112, 268, 90, 28, playing ? "Stop" : "Play")
+    ui["btnReset"] := MakeBtn(g, 212, 268, 90, 28, "Reset")
+
+    ui["lock"] := g.Add("CheckBox", "x322 y272 w160 h22", "Speed Lock")
+    ui["lock"].Value := speedLock ? 1 : 0
+
+    ui["stepLbl"] := g.Add("Text", "x12 y306 w50 h22 BackgroundTrans", "STEP")
+    ui["step"] := g.Add("Edit", "x62 y304 w70 h24 Number Background" Format("{:06X}", THEME["panel"]), STEP)
+    ui["stepS"] := g.Add("Slider", "x142 y304 w258 h24 Range15-800 TickInterval50 ToolTip", STEP)
+
+    ui["holdLbl"] := g.Add("Text", "x412 y306 w50 h22 BackgroundTrans", "HOLD")
+    ui["hold"] := g.Add("Edit", "x462 y304 w70 h24 Number Background" Format("{:06X}", THEME["panel"]), HOLD)
+    ui["holdS"] := g.Add("Slider", "x542 y304 w226 h24 Range10-780 TickInterval50 ToolTip", HOLD)
+
+    ui["status"] := g.Add("Text", "x12 y336 w756 h22 BackgroundTrans", "")
+    ui["statusCount"] := g.Add("Text", "x12 y336 w80 h22 BackgroundTrans Right", "")
+    ui["nextTok"] := g.Add("Text", "x12 y336 w360 h22 BackgroundTrans", "")
+    ui["nextTok"].SetFont("s10 cFF4444")
+
+    ui["btnApply"].OnEvent("Click", (*) => UIApply())
+    ui["btnPlay"].OnEvent("Click", (*) => UIToggle())
+    ui["btnReset"].OnEvent("Click", (*) => UIReset())
+    ui["stepS"].OnEvent("Change", (*) => UIStepFromSlider())
+    ui["holdS"].OnEvent("Change", (*) => UIHoldFromSlider())
+    ui["lock"].OnEvent("Click", (*) => UIToggleLock())
+
+    g.OnEvent("Close", (*) => ExitApp())
+    g.OnEvent("Size", (*) => (RoundRegion(g.Hwnd, 18), ClampWindowToWorkArea(g.Hwnd), Reflow()))
+
+    Reflow(){
+        global ui, uiMinW, uiMinH, btnMap
+        if (!ui)
+            return
+        g := ui["g"]
+
+        g.GetClientPos(&cx, &cy, &cw, &ch)
+
+        if (cw < uiMinW || ch < uiMinH) {
+            WinGetPos(, , &ww, &hh, "ahk_id " g.Hwnd)
+            dw := (uiMinW - cw)
+            dh := (uiMinH - ch)
+            if (dw < 0)
+                dw := 0
+            if (dh < 0)
+                dh := 0
+            WinMove(, , ww + dw, hh + dh, "ahk_id " g.Hwnd)
+            g.GetClientPos(&cx, &cy, &cw, &ch)
+        }
+
+        side := 12
+        bottomPad := 12
+        gap := 10
+
+        capH := 34
+        statusH := 22
+        slidersH := 28
+        btnH := 28
+
+        yStatus := ch - bottomPad - statusH
+        ySl := yStatus - gap - slidersH
+        yBtn := ySl - gap - btnH
+
+        editTop := capH + 10
+        editH := yBtn - editTop - 12
+        if (editH < 120)
+            editH := 120
+        maxEditH := ch - editTop - (bottomPad + statusH + gap + slidersH + gap + btnH + 12)
+        if (editH > maxEditH)
+            editH := maxEditH
+
+        ui["capBg"].Move(0, 0, cw, capH)
+
+        closeX := cw - side - 36
+        minX := cw - side - 72
+        helpX := cw - side - 108
+
+        ui["btnHelp"].Move(helpX, 6)
+        ui["btnMin"].Move(minX, 6)
+        ui["btnClose"].Move(closeX, 6)
+
+        btnMap[ui["btnHelp"]] := [helpX, 6, 30, 22]
+        btnMap[ui["btnMin"]] := [minX, 6, 30, 22]
+        btnMap[ui["btnClose"]] := [closeX, 6, 30, 22]
+
+        capRight := helpX - 10
+        capW := capRight - 14
+        if (capW < 80)
+            capW := 80
+        ui["caption"].Move(14, 8, capW, 18)
+
+        ui["edit"].Move(side, editTop, cw - side*2, editH)
+
+        ui["btnApply"].Move(side, yBtn, 90, btnH)
+        ui["btnPlay"].Move(side + 100, yBtn, 90, btnH)
+        ui["btnReset"].Move(side + 200, yBtn, 90, btnH)
+        ui["lock"].Move(side + 310, yBtn + 4)
+
+        ui["stepLbl"].Move(side, ySl + 4, 50, 22)
+        ui["step"].Move(side + 50, ySl + 2, 70, 24)
+
+        freeW := cw - (side + 130) - (side + 380)
+        if (freeW < 140)
+            freeW := 140
+        ui["stepS"].Move(side + 130, ySl, freeW, slidersH)
+
+        ui["holdLbl"].Move(cw - side - 368, ySl + 4, 50, 22)
+        ui["hold"].Move(cw - side - 318, ySl + 2, 70, 24)
+        ui["holdS"].Move(cw - side - 238, ySl, 226, slidersH)
+
+        countW := 80
+        nextW := 240
+        statusW := cw - side*2 - (countW + gap + nextW)
+
+        if (statusW < 120)
+            statusW := 120
+
+        ui["status"].Move(side, yStatus, statusW, statusH)
+        ui["statusCount"].Move(side + statusW + gap, yStatus, countW, statusH)
+        ui["nextTok"].Move(side + statusW + gap + countW + gap, yStatus, nextW, statusH)
+
+        btnMap[ui["btnApply"]] := [side, yBtn, 90, btnH]
+        btnMap[ui["btnPlay"]] := [side + 100, yBtn, 90, btnH]
+        btnMap[ui["btnReset"]] := [side + 200, yBtn, 90, btnH]
+    }
+
+    g.Show("w820 h460")
+    EnableDarkFrame(g.Hwnd)
+    RoundRegion(g.Hwnd, 18)
+    ClampWindowToWorkArea(g.Hwnd)
+    Reflow()
+
+    SetTimer(HoverFn, 16)
+
+    SyncUIValues()
+    SyncUIState()
+    UpdateCaretForToken(pos)
+}
+
+UIApply(){
+    global ui, seq, STEP, HOLD
+    if (!ui)
+        return
+    seq := ui["edit"].Value
+    STEP := Integer(ui["step"].Value ? ui["step"].Value : STEP)
+    HOLD := Integer(ui["hold"].Value ? ui["hold"].Value : HOLD)
+    ApplyTempo()
+    SafeRebuild(true)
+    SyncUIValues()
+}
+
+UIToggle(){
+    global playing
+    playing := !playing
+    if (playing)
+        StartPlayback()
+    else
+        StopPlayback()
+    SyncUIState()
+}
+
+UIReset(){
+    StopAndReset()
+}
+
+UIStepFromSlider(){
+    global ui, STEP
+    if (!ui)
+        return
+    STEP := ui["stepS"].Value
+    ApplyTempo()
+    QueueRebuild(false)
+    SyncUIValues()
+}
+
+UIHoldFromSlider(){
+    global ui, HOLD
+    if (!ui)
+        return
+    HOLD := ui["holdS"].Value
+    ApplyTempo()
+    SyncUIValues()
+}
+
+UIToggleLock(){
+    global ui, speedLock
+    if (!ui)
+        return
+    speedLock := ui["lock"].Value = 1
+    SyncUIState()
+}
+
+SyncUIValues(){
+    global ui, STEP, HOLD
+    if (!ui)
+        return
+    ui["step"].Value := STEP
+    ui["hold"].Value := HOLD
+    ui["stepS"].Value := STEP
+    ui["holdS"].Value := HOLD
+}
+
+SyncUIState(){
+    global ui, playing, speedLock, pos, tcount, lastStatusText, lastBtnPlayText, lastCountText, lastNextText
+    if (!ui)
+        return
+
+    btnText := playing ? "Stop" : "Play"
+    if (btnText != lastBtnPlayText) {
+        lastBtnPlayText := btnText
+        ui["btnPlay"].Text := btnText
+    }
+
+    lockTxt := speedLock ? "Tempo 🔒" : "Tempo"
+
+    shown := pos - 1
+    if (shown < 0)
+        shown := 0
+
+    s := "F1 Play/Stop | End Reset | [ Next | Wheel " lockTxt " | Ctrl+Shift+P Alvo"
+    if (s != lastStatusText) {
+        lastStatusText := s
+        ui["status"].Text := s
+    }
+
+    c := shown "/" tcount
+    if (c != lastCountText) {
+        lastCountText := c
+        ui["statusCount"].Text := c
+    }
+
+    txt := GetUpcomingPreview(40)
+    if (txt != lastNextText) {
+        lastNextText := txt
+        ui["nextTok"].Text := txt
+    }
+}
