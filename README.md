@@ -10,7 +10,7 @@ The script **updates itself automatically 🔄** on startup, always pulling the 
 
 ## ⬇️ Download
 
-[![Download](https://img.shields.io/badge/Download-main__autoupdate.ahk-7C4DFF?style=for-the-badge)](https://raw.githubusercontent.com/bieleal/virtual-piano-auto/main/main_autoupdate.ahk)
+[![Download](https://img.shields.io/badge/Download-PIANO%20AUTO.ahk-7C4DFF?style=for-the-badge)](https://raw.githubusercontent.com/bieleal/virtual-piano-auto/main/PIANO%20AUTO.ahk)
 
 ---
 
