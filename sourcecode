@@ -11,7 +11,7 @@ global targetTitle := ""
 global targetPid := 0
 global targetHwnd := 0
 
-global VERSION := "0.1 - BETA"
+global VERSION := "0.999 - BETA"
 
 global seq := ""
 global playing := false
