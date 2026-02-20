@@ -11,7 +11,7 @@ global targetTitle := ""
 global targetPid := 0
 global targetHwnd := 0
 
-global VERSION := "0.1 - BETA"
+global VERSION := "0.2 - BETA"
 
 global seq := ""
 global playing := false
@@ -116,6 +116,11 @@ End::{
 }
 
 [::
+{
+    PlayOne()
+}
+
+]::
 {
     PlayOne()
 }
@@ -981,7 +986,7 @@ ShowHelp(){
     "Controls:`r`n`r`n"
     "F1  → Play / Stop`r`n"
     "End → Reset (back to start)`r`n"
-    "[   → Play next token only`r`n"
+    "[ or ]  → Play next token only`r`n"
     "Wheel (on target) → Adjust STEP`r`n"
     "Ctrl+Shift+P → Change target window`r`n`r`n"
     "Editor Syntax:`r`n`r`n"
