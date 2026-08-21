@@ -18,7 +18,12 @@ Before running the script, make sure you have installed:
 
 ## ⬇️ Download
 
-[![Download Launcher](https://img.shields.io/badge/Download-launcher.ahk-7C4DFF?style=for-the-badge)](https://github.com/the-sleepless/virtual-piano-auto/releases/download/piano-launcher-v1.0.0/Piano_Launcher.ahk)
+<div align="center">
+
+[![Version][shield-repo-latest]][repo-latest]
+[![Download Launcher][shield-download-launcher]][download-launcher]
+
+</div>
 
 ---
 
@@ -36,3 +41,12 @@ Before running the script, make sure you have installed:
 ---
 
 Active development in progress 🚀
+
+
+<!-- Badges -->
+
+[shield-repo-latest]: https://img.shields.io/github/v/release/the-sleepless/virtual-piano-auto?style=for-the-badge
+[repo-latest]: https://github.com/the-sleepless/virtual-piano-auto/releases/latest
+
+[shield-download-launcher]: https://img.shields.io/badge/Download-launcher.ahk-7C4DFF?style=for-the-badge
+[download-launcher]: https://github.com/the-sleepless/virtual-piano-auto/releases/download/piano-launcher-v1.0.0/Piano_Launcher.ahk
