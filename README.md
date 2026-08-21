@@ -10,7 +10,7 @@ The script **updates automatically 🔄** every time you open it — pulling the
 
 ## ⬇️ Download
 
-[![Download Launcher](https://img.shields.io/badge/Download-launcher.ahk-7C4DFF?style=for-the-badge)](https://github.com/bieleal/virtual-piano-auto/releases/download/piano-base-v1/launcher.ahk)
+[![Download Launcher](https://img.shields.io/badge/Download-launcher.ahk-7C4DFF?style=for-the-badge)](https://github.com/bieleal/virtual-piano-auto/releases/download/piano-launcher-v1.0.0/launcher.ahk)
 
 ---
 
