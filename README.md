@@ -8,6 +8,14 @@ The script **updates automatically 🔄** every time you open it — pulling the
 
 ---
 
+## 📋 Requirements
+
+Before running the script, make sure you have installed:
+
+- **[AutoHotkey v2](https://www.autohotkey.com/)** (Required to run the `.ahk` scripts)
+
+---
+
 ## ⬇️ Download
 
 [![Download Launcher](https://img.shields.io/badge/Download-launcher.ahk-7C4DFF?style=for-the-badge)](https://github.com/bieleal/virtual-piano-auto/releases/download/piano-launcher-v1.0.0/Piano_Launcher.ahk)
