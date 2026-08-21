@@ -18,7 +18,7 @@ Before running the script, make sure you have installed:
 
 ## ⬇️ Download
 
-[![Download Launcher](https://img.shields.io/badge/Download-launcher.ahk-7C4DFF?style=for-the-badge)](https://github.com/the-sleepless/virtual-piano-auto/raw/main/Piano_Launcher.ahk)
+[![Download Launcher](https://img.shields.io/badge/Download-launcher.ahk-7C4DFF?style=for-the-badge)](https://raw.githubusercontent.com/the-sleepless/virtual-piano-auto/main/Piano_Launcher.ahk?dl=1)
 
 ---
 
