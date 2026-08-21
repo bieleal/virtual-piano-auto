@@ -1,29 +1,30 @@
 # 🎹 Virtual Piano AUTO
 
-An **AutoHotkey v2** script that automatically plays piano sheets (Virtual Piano / Roblox), built with a strong focus on **performance ⚡**, **stability 🛡️**, and **real-world usability**.
+An **AutoHotkey v2** script designed to automatically play piano sheets for Virtual Piano and Roblox. Built for **peak performance ⚡**, **rock-solid stability 🛡️**, and **seamless usability**.
 
-It features a **custom dark UI 🌑**, a borderless window, real-time tempo control 🎚️, and a token-based playback system (keys, chords, and pauses).
+It features a **clean dark UI 🌑**, flicker-free progress tracking, real-time tempo controls 🎚️, and an efficient token-based engine that handles keys, chords, and timing pauses effortlessly.
 
-The script **updates itself automatically 🔄** on startup, always pulling the latest version with fixes and improvements — no manual downloads needed.
+The script **updates automatically 🔄** every time you open it — pulling the latest build straight from GitHub while bypassing any cache delays.
 
 ---
 
-## ⬇️ Download (Release)
+## ⬇️ Download
 
 [![Download Launcher](https://img.shields.io/badge/Download-launcher.ahk-7C4DFF?style=for-the-badge)](https://github.com/bieleal/virtual-piano-auto/releases/download/piano-base-v1/launcher.ahk)
 
 ---
 
-## ✨ Highlights
+## ✨ Features
 
-- High-performance playback using `SendInput ⚡`
-- Full chord and pause support 🎶
-- Target window / process selection 🎯
-- Hotkeys only work when the target window is active 🔒
-- Custom lightweight and responsive UI 🖥️
-- Real-time tempo adjustment 🎛️
-- Automatic updates 🔄
+- **Blazing Fast Playback:** Powered by `SendInput ⚡` for minimal delay.
+- **Full Notation Support:** Seamlessly handles chords, custom timing, and pauses 🎶.
+- **Smart Window Targeting:** Automatically hooks into your active game window — no manual process selection required 🎯.
+- **Safe Hotkeys:** Keybinds only trigger when you're focused on the game 🔒.
+- **Modern Dark UI:** Lightweight, responsive interface with customized controls and no screen flickering 🖥️.
+- **On-the-Fly Tempo Control:** Adjust speed in real-time using hotkeys or sliders 🎛️.
+- **Instant Updates:** Always runs the newest version by bypassing GitHub's raw file cache 🔄.
+- **Clean Exit:** Safely releases held keys and clears memory on close 🛡️.
 
 ---
 
-Project under active development 🚀
+Active development in progress 🚀
